@@ -4,6 +4,7 @@ from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
+import avto_trayde_bot
 import os
 from dotenv import load_dotenv
 
@@ -47,8 +48,107 @@ async def start_command(message: types.Message):
     )
 
 
-# Barcha handlerlar (oldingi kodda borlarini qo'shing)
-# ...
+# Help komandasi
+@dp.message(Command("help"))
+async def help_command(message: types.Message):
+    await message.answer(
+        "🛠 Bot yordamchi buyrug‘i:\n"
+        "/start - Boshlash\n"
+        "/help - Yordam\n\n"
+        "Tugmalar orqali Avto Trading ni yoqish yoki to‘xtatish mumkin."
+    )
+
+
+# Barcha tugmalarni qabul qilish
+@dp.message()
+async def handle_text_commands(message: types.Message):
+    global avto_mode, bot_task
+
+    if message.text == "🚀 Avto tradingni boshlash":
+        while avto_mode:
+            if avto_trayde_bot.sotib_olindi:
+                await  message.answer("Coin sotib olindi 💀!")
+            elif avto_trayde_bot.sotild:
+                await  message.answer("Coin sotildi 💀!")
+        if not avto_mode:
+            avto_mode = True
+            avto_trayde_bot.avto = True
+            await message.answer("🤖 Avto trading ishga tushdi . . . ")
+
+            # Avto tradingni fon rejimida ishga tushirish
+            bot_task = asyncio.create_task(avto_trayde_bot.multi_coin_bot())
+
+        else:
+            await message.answer("⚠️ Avto trading allaqachon ishga tushgan!")
+
+    elif message.text == "🛑 Avto tradingni to‘xtatish":
+        if avto_mode:
+            avto_mode = False
+            avto_trayde_bot.avto = False
+            avto_trayde_bot.log_list_bot_wrtie = []
+            print("Avto trading to‘xtatildi. Loglar saqlandi...")
+            print("Bot kutish holatiga o‘tish...")
+
+            if bot_task:
+                bot_task.cancel()  # 🔁 Taskni bekor qiladi
+                bot_task = None
+
+            await message.answer("🛑 Avto trading to‘xtatildi.")
+    elif message.text == "📈 Coinlar narxlari tekshirish":
+        prices = avto_trayde_bot.get_current_coin_prices()
+        if prices:
+            text = "📈 Hozirgi Coinlar narxlari:\n\n"
+            for symbol, price in prices.items():
+                coin_emoji = "🪙"
+                if "BTC" in symbol:
+                    coin_emoji = "₿"
+                elif "ETH" in symbol:
+                    coin_emoji = "⚙️"
+                elif "BNB" in symbol:
+                    coin_emoji = "🔥"
+
+                text += f"{coin_emoji} {symbol}: ${price:,.2f}\n"
+            await message.answer(text)
+        else:
+            await message.answer("⚠️ Coin narxlarini olishda muammo yuz berdi.")
+
+
+    # "🏛️ Balanceni tekshirish" tugmasi uchun yangilangan kod
+    elif message.text == "🏛️ Balance ni tekshirish":
+        if avto_mode:
+            await message.answer("⚠️ Avto trading allaqachon ishga tushgan!")
+        else:
+            usdt_balance, coin_balances = avto_trayde_bot.get_balance()
+
+            # USDT balansni chiroyli formatlash
+            formatted_usdt_balance = f"{usdt_balance:,.2f}"
+
+            # Balansdagi tangalarni chiroyli formatlash
+            coin_details = ""
+            for coin, amount in coin_balances.items():
+                # Tangalar va ularning miqdorlarini aniqlash
+                formatted_amount = f"{amount:,.4f}"  # 4 ta kasr raqami ko'rsatish
+                coin_details += f"{coin}: {formatted_amount}\n"
+
+            # Foydalanuvchiga chiroyli formatda yuborish
+            response_text = f"💰 **USDT balans**: ${formatted_usdt_balance}\n\n"
+            response_text += "🔹 **Balansdagi tangalar**:\n"
+            if coin_details:
+                response_text += coin_details
+            else:
+                response_text += "🔻 Tangalar mavjud emas."
+
+            await message.answer(response_text)
+
+
+    else:
+        await message.answer(
+            "🛠 Bot yordamchi buyrug‘i:\n"
+            "/start - Boshlash\n"
+            "/help - Yordam\n\n"
+            "Tugmalar orqali Avto Trading ni yoqish yoki to‘xtatish mumkin."
+        )
+
 
 # Webhook ishga tushganda
 async def on_startup(bot: Bot):
