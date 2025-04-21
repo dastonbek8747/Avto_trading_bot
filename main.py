@@ -4,7 +4,6 @@ from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
-import avto_trayde_bot  # Sizning trading modulingiz
 import os
 from dotenv import load_dotenv
 
