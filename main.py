@@ -1,30 +1,43 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import (
-    ReplyKeyboardMarkup,
-    KeyboardButton
-)
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
+import avto_trayde_bot  # Sizning trading modulingiz
+import os
+from dotenv import load_dotenv
 
-import avto_trayde_bot
-import my_secrets
-from avto_trayde_bot import automatik_Binance_Trade_Bot
+# .env faylini yuklash
+load_dotenv()
 
-bot = Bot(token=my_secrets.Bot_token)
+Bot_token = os.getenv('Bot_token')
+WEB_SERVER_HOST = "0.0.0.0"  # Render uchun majburiy
+WEB_SERVER_PORT = 10000  # Render default porti
+WEBHOOK_PATH = "/webhook"  # Webhook yo'li
+BASE_WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # Renderdan olingan URL (masalan: https://your-bot.onrender.com)
+
+# Botni ishga tushirish
+bot = Bot(token=Bot_token)
 dp = Dispatcher()
 
-avto_mode = False  # bot holatini nazorat qiladi
+# Holatni saqlash
+avto_mode = False
+bot_task = None
 
-# Reply keyboard (asosiy klaviatura)
+# Klaviatura (oldingi kabi)
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🚀 Avto tradingni boshlash")],
-        [KeyboardButton(text="🛑 Avto tradingni to‘xtatish")]
+        [KeyboardButton(text="🛑 Avto tradingni to‘xtatish")],
+        [KeyboardButton(text="🏛️ Balance ni tekshirish")],
+        [KeyboardButton(text="📈 Coinlar narxlari tekshirish")]
     ],
     resize_keyboard=True
 )
 
 
+# Start komandasi (oldingi kabi)
 @dp.message(Command("start"))
 async def start_command(message: types.Message):
     await message.answer(
@@ -35,51 +48,39 @@ async def start_command(message: types.Message):
     )
 
 
-@dp.message(Command("help"))
-async def help_command(message: types.Message):
-    await message.answer(
-        "🛠 Bot yordamchi buyrug‘i:\n"
-        "/start - Boshlash\n"
-        "/help - Yordam\n\n"
-        "Tugmalar orqali Avto Trading ni yoqish yoki to‘xtatish mumkin."
-    )
+# Barcha handlerlar (oldingi kodda borlarini qo'shing)
+# ...
+
+# Webhook ishga tushganda
+async def on_startup(bot: Bot):
+    await bot.set_webhook(f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}")
 
 
-@dp.message()
-async def handle_text_commands(message: types.Message):
-    global avto_mode
-
-    if message.text == "🚀 Avto tradingni boshlash":
-        if not avto_mode:
-            avto_mode = True
-            avto_trayde_bot.avto = True
-            await message.answer("🤖 Avto trading ishga tushdi . . . ")
-            await asyncio.to_thread(automatik_Binance_Trade_Bot)
-            text = "\n".join(avto_trayde_bot.log_list_bot_wrtie)
-            await message.answer(f"\n\n{text}")
-        else:
-            await message.answer("⚠️ Avto trading allaqachon ishga tushgan!")
-
-    elif message.text == "🛑 Avto tradingni to‘xtatish":
-        if avto_mode:
-            avto_mode = False
-            avto_trayde_bot.avto = False
-            avto_trayde_bot.log_list_bot_wrtie = []
-            await message.answer("🛑 Avto trading to‘xtatildi.")
-            # Shu yerda siz trade botga to‘xtash funksiyasi qo‘shishingiz kerak bo‘ladi, hozircha flagni o‘chirayapmiz
-        else:
-            await message.answer("ℹ️ Avto trading hali ishga tushmagan.")
-
-
+# Aiohttp server yaratish
 async def main():
-    print("Bot ishga tushdi...")
-    await dp.start_polling(bot)
+    # Webhook sozlamalari
+    dp.startup.register(on_startup)
+
+    # Aiohttp app
+    app = web.Application()
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+        webhook_path=WEBHOOK_PATH,
+    )
+    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+    setup_application(app, dp, bot=bot)
+
+    # Serverni ishga tushirish
+    await web._run_app(app, host=WEB_SERVER_HOST, port=WEB_SERVER_PORT)
 
 
 if __name__ == "__main__":
+    # Windows uchun event loop sozlamasi
     import sys
 
     if sys.platform.startswith('win'):
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+    # Asosiy funksiyani ishga tushirish
     asyncio.run(main())
