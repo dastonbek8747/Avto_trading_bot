@@ -65,11 +65,7 @@ async def handle_text_commands(message: types.Message):
     global avto_mode, bot_task
 
     if message.text == "🚀 Avto tradingni boshlash":
-        while avto_mode:
-            if avto_trayde_bot.sotib_olindi:
-                await  message.answer("Coin sotib olindi 💀!")
-            elif avto_trayde_bot.sotild:
-                await  message.answer("Coin sotildi 💀!")
+
         if not avto_mode:
             avto_mode = True
             avto_trayde_bot.avto = True
@@ -77,7 +73,11 @@ async def handle_text_commands(message: types.Message):
 
             # Avto tradingni fon rejimida ishga tushirish
             bot_task = asyncio.create_task(avto_trayde_bot.multi_coin_bot())
-
+            while avto_mode:
+                if avto_trayde_bot.sotib_olindi:
+                    await  message.answer("Coin sotib olindi 💀!")
+                elif avto_trayde_bot.sotild:
+                    await  message.answer("Coin sotildi 💀!")
         else:
             await message.answer("⚠️ Avto trading allaqachon ishga tushgan!")
 
