@@ -1,138 +1,237 @@
-import time
 import ccxt
-import my_secrets as ms
 from datetime import datetime
+import csv
+import traceback
+import asyncio
+from dotenv import load_dotenv
+import os
 
-# Binance API ulanishi
+# .env faylini yuklash
+load_dotenv()
+
+# API kalitlarini o'qish
+api_key = os.getenv('binance_demo_api')
+secret_key = os.getenv('binance_demo_secret')
+
+# Binance bozorini sozlash
 exchange = ccxt.binance({
-    'apiKey': ms.Api_klyuch,
-    'secret': ms.Secret_klyuch,
+    'apiKey': api_key,
+    'secret': secret_key,
     'enableRateLimit': True,
+    'options': {
+        'defaultType': 'spot',
+        'adjustForTimeDifference': True,
+        'recvWindow': 60000,
+    }
 })
 
+# Sandbox rejimiga o'tkazish
+exchange.set_sandbox_mode(True)
 # Sozlamalar
-CHECK_INTERVAL = 10  # tekshirish oralig‘i (soniya)
-CHANGE_PERCENT = 0.5  # o'zgarish foizi
-my_usdt_amount = 1  # siz istagancha USD lik savdo miqdori
-avto = False
-log_list_bot_wrtie = []
+sikl_aylanish_vaqti = 15
+sotib_olish_narhi = 70
+start_sotish_narhi = 155
+coin_olish_narhi = 2000
+sotib_olindi = False
+sotildi = False
+avto = True
+curs_ozgarish_farqi = 375
+RISK_REWARD_RATIO = 3
+STOP_LOSS_PERCENT = 5  # Stop loss foizi (misol: 5%)
+COINS = ["BTC/USDT", "ETH/USDT", "BNB/USDT"]
 
-# Sotib olingan narxni saqlash
-last_btc_buy_price = None
-last_eth_buy_price = None
+# Coin holatlari
+coin_data = {
+    symbol: {
+        "initial_price": None,
+        "last_buy_price": None,
+        "target_price": None,
+        "bought": False,
+        "sell_multiplier": start_sotish_narhi
+    } for symbol in COINS
+}
+
+log_list_bot_write = []
 
 
 def format_price(price):
-    return "{:,.2f}".format(price)
+    return f"${price:,.2f}"
 
 
-def calculate_change(current, previous):
-    return ((current - previous) / previous) * 100
+def log_console(msg):
+    log_list_bot_write.append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+    print(log_list_bot_write[-1])
+    save_log_to_file()
 
 
-def get_current_prices():
+def save_log_to_file():
     try:
-        btc = exchange.fetch_ticker("BTC/USDT")['last']
-        eth = exchange.fetch_ticker("ETH/USDT")['last']
-        return btc, eth
-    except Exception as e:
-        print(f"❌ Narxlarni olishda xato: {e}")
-        return None, None
+        with open("bot_log.txt", "a", encoding="utf-8") as f:
+            for line in log_list_bot_write:
+                f.write(line + "\n")
+        log_list_bot_write.clear()
+    except Exception:
+        error_log(traceback.format_exc())
 
 
-def get_trade_amount(symbol, usdt_balance):
-    ticker = exchange.fetch_ticker(symbol)
-    price = ticker['last']
-    amount = usdt_balance / price
-    return round(amount, 6)
+def error_log(error_text):
+    with open("error_log.txt", "a", encoding="utf-8") as f:
+        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]\n{error_text}\n{'=' * 80}\n")
 
 
-def log_trade(symbol, side, amount, price):
-    total = amount * price
-    log_list_bot_wrtie.append(
-        f"{datetime.now()} | {side.upper()} | {symbol} | Amount: {amount:.6f} | Price: {price:.2f} | Total: {total:.2f} USDT")
-    with open("trade_log.txt", "a") as log_file:
-        log_file.write(
-            f"{datetime.now()} | {side.upper()} | {symbol} | Amount: {amount:.6f} | Price: {price:.2f} | Total: {total:.2f} USDT\n")
-
-
-def make_trade(symbol, side, amount):
-    global last_btc_buy_price, last_eth_buy_price
+def get_prices(symbols):
     try:
-        order = exchange.create_market_order(symbol, side, amount)
-        current_price = exchange.fetch_ticker(symbol)['last']
-        print(f"✅ {side.upper()} qilindi: {symbol} - {amount:.6f} @ {format_price(current_price)}")
-
-        log_trade(symbol, side, amount, current_price)
-
-        if side == "buy":
-            if symbol == "BTC/USDT":
-                last_btc_buy_price = current_price
-                print(f"📊 Sotib olingan BTC narxi: {format_price(last_btc_buy_price)}")
-            elif symbol == "ETH/USDT":
-                last_eth_buy_price = current_price
-                print(f"📊 Sotib olingan ETH narxi: {format_price(last_eth_buy_price)}")
+        tickers = exchange.fetch_tickers(symbols)
+        return {symbol: tickers[symbol]['last'] for symbol in symbols}
     except Exception as e:
-        print(f"❌ Savdo xatosi ({symbol} - {side}): {e}")
+        log_console(f"❌ Narxlarni olishda xato: {e}")
+        return {}
 
 
-def automatik_Binance_Trade_Bot():
-    print("🤖 Avtomatik Binance Trade Bot ishga tushdi")
-    prev_btc, prev_eth = get_current_prices()
+def get_balance():
+    try:
+        balance = exchange.fetch_balance()
+        usdt_balance = balance['total']['USDT']
+        coin_balances = {coin.split('/')[0]: balance['total'].get(coin.split('/')[0], 0) for coin in COINS}
+        return usdt_balance, coin_balances
+    except Exception:
+        error_log(traceback.format_exc())
+        return 0, {}
 
-    if prev_btc is None or prev_eth is None:
-        print("❌ Dastlabki narxlarni olishda xato. Dastur to‘xtatildi.")
-        return
 
-    print(f"📊 Boshlang‘ich narxlar | BTC: {format_price(prev_btc)} | ETH: {format_price(prev_eth)}")
+def get_trade_amount(symbol, usdt_amount, price):
+    return round(usdt_amount / price, 6) if price else 0
 
+
+def buy(symbol, price):
+    global sotib_olindi, sotildi
+    try:
+        usdt_balance, _ = get_balance()
+        if usdt_balance < coin_olish_narhi:
+            log_console(f"⚠️ {symbol} uchun yetarli USDT yo‘q.")
+            return
+
+        amount = get_trade_amount(symbol, coin_olish_narhi, price)
+        exchange.create_market_order(symbol, "buy", amount)
+
+        coin_data[symbol].update({
+            'last_buy_price': price,
+            'target_price': price + (coin_data[symbol]['sell_multiplier'] * RISK_REWARD_RATIO),
+            'bought': True,
+            'sell_multiplier': coin_data[symbol]['sell_multiplier'] * 2
+        })
+        sotib_olindi = True
+        sotildi = False
+        log_console(f"✅ {symbol} xarid qilindi @ {format_price(price)}")
+        log_console(f"🎯 Maqsad narx: {format_price(coin_data[symbol]['target_price'])}")
+    except Exception:
+        error_log(traceback.format_exc())
+
+
+def sell(symbol, price):
+    global sotib_olindi, sotildi
+    try:
+        coin = symbol.split("/")[0]
+        balance = exchange.fetch_balance()
+        amount = balance[coin]['free']
+        if amount < 0.0001:
+            log_console(f"⚠️ {symbol} sotish uchun balans yetarli emas.")
+            return
+
+        exchange.create_market_order(symbol, "sell", amount)
+
+        sotib_olindi = False
+        sotildi = True
+        log_console(f"✅ {symbol} sotildi @ {format_price(price)} | Miqdor: {amount:.6f}")
+
+        log_data = {
+            "datetime": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "symbol": symbol,
+            "amount": amount,
+            "price": price,
+            "total": round(price * amount, 2)
+        }
+
+        with open("trade_log.csv", "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=log_data.keys())
+            if f.tell() == 0:
+                writer.writeheader()
+            writer.writerow(log_data)
+
+        coin_data[symbol].update({
+            "last_buy_price": None,
+            "target_price": None,
+            "initial_price": price,
+            "bought": False,
+            "sell_multiplier": start_sotish_narhi
+        })
+    except Exception:
+        error_log(traceback.format_exc())
+
+
+async def multi_coin_bot():
+    log_console("🤖 Multi-Coin Trade Bot ishga tushdi")
     while avto:
         try:
-            time.sleep(CHECK_INTERVAL)
-            current_btc, current_eth = get_current_prices()
-            if current_btc is None or current_eth is None:
-                continue
+            print("\n" + "=" * 80)
+            print(f"🕒 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Monitoring...")
+            print("=" * 80)
 
-            current_time = datetime.now().strftime("%H:%M:%S")
-            print(f"\n🕒 {current_time} | BTC: {format_price(current_btc)} | ETH: {format_price(current_eth)}")
+            prices = get_prices(COINS)
+            usdt_balance, _ = get_balance()
 
-            balance = exchange.fetch_balance()
+            for symbol in COINS:
+                price = prices.get(symbol)
+                if not price:
+                    continue
 
-            # BTC uchun
-            if last_btc_buy_price is not None:
-                btc_change = calculate_change(current_btc, last_btc_buy_price)
-                if abs(btc_change) >= CHANGE_PERCENT:
-                    print("BTC mos keldi")  # 🔔 Faqat shuni chiqaradi
-                    if btc_change > 0:
-                        btc_amount = balance['BTC']['free']
-                        if btc_amount > 0.0001:
-                            make_trade("BTC/USDT", "sell", btc_amount)
-                    else:
-                        if balance['USDT']['free'] > my_usdt_amount:
-                            amount = get_trade_amount("BTC/USDT", my_usdt_amount)
-                            make_trade("BTC/USDT", "buy", amount)
+                coin = coin_data[symbol]
+                if coin['initial_price'] is None:
+                    coin['initial_price'] = price
+                    log_console(f"📌 {symbol} boshlang‘ich narxi: {format_price(price)}")
+                    continue
 
-            # ETH uchun
-            if last_eth_buy_price is not None:
-                eth_change = calculate_change(current_eth, last_eth_buy_price)
-                if abs(eth_change) >= CHANGE_PERCENT:
-                    print("ETH mos keldi")  # 🔔 Faqat shuni chiqaradi
-                    if eth_change > 0:
-                        eth_amount = balance['ETH']['free']
-                        if eth_amount > 0.001:
-                            make_trade("ETH/USDT", "sell", eth_amount)
-                    else:
-                        if balance['USDT']['free'] > my_usdt_amount:
-                            amount = get_trade_amount("ETH/USDT", my_usdt_amount)
-                            make_trade("ETH/USDT", "buy", amount)
+                diff = price - coin['initial_price']
+                status = "Monitoring 🔍"
 
-            prev_btc, prev_eth = current_btc, current_eth
+                # Narx o‘zgarishi
+                if price <= coin['initial_price'] - curs_ozgarish_farqi:
+                    log_console(
+                        f"🔻 {symbol} narxi {curs_ozgarish_farqi}$ tushdi: {format_price(coin['initial_price'])} ➡ {format_price(price)}")
+                    if not coin['bought'] or (coin['last_buy_price'] and price >= coin['last_buy_price']):
+                        coin['initial_price'] = price
+                        log_console(f"📉 {symbol} yangi boshlang‘ich narx: {format_price(price)}")
+                elif price >= coin['initial_price'] + curs_ozgarish_farqi:
+                    log_console(
+                        f"🔺 {symbol} narxi {curs_ozgarish_farqi}$ oshdi: {format_price(coin['initial_price'])} ➡ {format_price(price)}")
+                    coin['initial_price'] = price
+                    log_console(f"📈 {symbol} yangi boshlang‘ich narx: {format_price(price)}")
 
-        except KeyboardInterrupt:
-            print("\n\n\n🛑 Dastur to‘xtatildi")
-            break
-        except Exception as e:
-            print(f"⚠️ Xato: {e} | 30 soniya kutamiz...")
-            time.sleep(30)
+                # Stop loss tekshiruvi
+                if coin['bought'] and price <= coin['last_buy_price'] * (1 - STOP_LOSS_PERCENT / 100):
+                    sell(symbol, price)
+                    status = "💰 Stop Loss Triggered"
+                # Target price tekshiruvi
+                elif coin['bought'] and price >= coin['target_price']:
+                    sell(symbol, price)
+                    status = "💰 Sell"
+                # Sotib olish tekshiruvi
+                elif not coin['bought'] and price <= sotib_olish_narhi:
+                    buy(symbol, price)
+                    status = "🛒 Buy"
 
-    print("\n\n🛑 Avto trading to‘xtatildi !\n\n")
+                print(
+                    f"{symbol.ljust(10)} | Narx: {format_price(price).ljust(12)} | Farq: {diff:+.2f}$ | Status: {status}")
+
+            print("=" * 80)
+            await asyncio.sleep(sikl_aylanish_vaqti)
+        except Exception:
+            error_log(traceback.format_exc())
+
+    log_console("🛑 Bot to‘xtatildi.")
+
+
+# 🔹 Coinlarning joriy narxlarini olish uchun funksiya
+def get_current_coin_prices():
+    prices = get_prices(COINS)
+    return prices
