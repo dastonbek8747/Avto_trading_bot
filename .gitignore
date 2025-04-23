@@ -1,8 +1,6 @@
 .venv
 .idea
 .env
-.DS_Store
-.gitignore
 .bot_log.txt
 .error_log.txt
 .trade_log.csv
