@@ -4,3 +4,6 @@
 .bot_log.txt
 .error_log.txt
 .trade_log.csv
+__pycache__/
+*.py[cod]
+.idea/
