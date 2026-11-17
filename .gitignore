@@ -4,3 +4,19 @@
 .bot_log.txt
 .error_log.txt
 .trade_log.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+# Environment
+.env.*
+!.env.example
+# IDE
+.idea/
+.vscode/
+# OS
+.DS_Store
